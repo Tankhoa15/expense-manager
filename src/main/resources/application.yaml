@@ -1,0 +1,65 @@
+spring:
+  application:
+    name: expense-manager
+  datasource:
+    url: jdbc:postgresql://localhost:5432/expense_db
+    username: postgres
+    password: 123456
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: your-email@gmail.com
+    password: your-app-password
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password:
+
+app:
+  rabbitmq:
+    exchange: expense-exchange
+    queues:
+      transaction: transaction-queue
+      budget: budget-queue
+      notification: notification-queue
+    routing-keys:
+      transaction: transaction.created
+      budget: budget.alert
+      notification: notification.send
+
+  jwt:
+    secret: VWRfdmVyeVN1cGVyU2VjcmV0S2V5X0Zvcl9KVVdUX0NvZGVfMjAyNl8xMjM0NTY3ODkwXzEyMzQ1Njc4OTAxMjM0NTY3ODkw
+    expiration-ms: 86400000
+
+  cache:
+    dashboard:
+      ttl-minutes: 5
+    statistics:
+      ttl-minutes: 10
+
+  email:
+    from: your-email@gmail.com
+    from-name: Expense Manager
+
+  twofa:
+    issuer: ExpenseManager
