@@ -1,8 +1,13 @@
+# .dockerignore for Fly.io
 target/
-.git/
-.gitignore
+!target/*.jar
 .mvn/wrapper/maven-wrapper.jar
+node_modules/
 frontend/
 *.md
-.env*
+.git/
+.gitignore
+*.example
 docker-compose*.yml
+.env*
+*.log

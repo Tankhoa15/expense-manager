@@ -1,0 +1,33 @@
+# Fly.io configuration for Expense Manager Backend
+app = "expense-manager-backend"
+primary_region = "sin" # Singapore - gần Việt Nam nhất
+
+[build]
+  dockerfile = "Dockerfile.flyio"
+
+[env]
+  SPRING_PROFILES_ACTIVE = "prod"
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  
+  [[http_service.checks]]
+    grace_period = "60s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/api/v1/health"
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+[[statics]]
+  guest_path = "/app/public"
+  url_prefix = "/static/"
