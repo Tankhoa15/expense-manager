@@ -1,0 +1,40 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://postgres:5432/expense_uat_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:changeme}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+  mail:
+    username: ${MAIL_USERNAME:your-email@gmail.com}
+    password: ${MAIL_PASSWORD:your-app-password}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:changeme_uat_very_long_secret_key_at_least_256_bits}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+
+  email:
+    from: ${MAIL_FROM:noreply@expense-manager-uat.com}
+    from-name: "Expense Manager UAT"
+
+  cache:
+    dashboard:
+      ttl-minutes: 2
+    statistics:
+      ttl-minutes: 5
+
+logging:
+  level:
+    com.dev.expense_manager: DEBUG
+    org.springframework.security: INFO
