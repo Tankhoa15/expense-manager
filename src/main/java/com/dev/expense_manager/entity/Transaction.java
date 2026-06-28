@@ -47,6 +47,15 @@ public class Transaction {
     @JoinColumn(name = "category_id", nullable = false)
     private Category category;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "money_source_id")
+    private MoneySource moneySource;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private TransactionStatus status = TransactionStatus.PENDING;
+
     @Column(name = "is_deleted")
     @Builder.Default
     private boolean isDeleted = false;

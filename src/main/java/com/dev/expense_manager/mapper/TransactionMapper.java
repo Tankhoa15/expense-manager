@@ -15,6 +15,7 @@ public class TransactionMapper {
                 .id(transaction.getId())
                 .amount(transaction.getAmount())
                 .type(transaction.getType())
+                .status(transaction.getStatus())
                 .transactionDate(transaction.getTransactionDate())
                 .note(transaction.getNote())
                 .description(transaction.getDescription())
@@ -22,6 +23,8 @@ public class TransactionMapper {
                 .categoryName(transaction.getCategory().getName())
                 .categoryIcon(transaction.getCategory().getIcon())
                 .categoryColor(transaction.getCategory().getColor())
+                .moneySourceId(transaction.getMoneySource() != null ? transaction.getMoneySource().getId() : null)
+                .moneySourceName(transaction.getMoneySource() != null ? transaction.getMoneySource().getName() : null)
                 .createdAt(transaction.getCreatedAt())
                 .updatedAt(transaction.getUpdatedAt())
                 .build();

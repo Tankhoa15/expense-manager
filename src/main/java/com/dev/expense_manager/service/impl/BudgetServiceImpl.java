@@ -9,15 +9,14 @@ import com.dev.expense_manager.entity.User;
 import com.dev.expense_manager.exception.BadRequestException;
 import com.dev.expense_manager.exception.ResourceNotFoundException;
 import com.dev.expense_manager.mapper.BudgetMapper;
-import com.dev.expense_manager.message.BudgetAlertMessage;
 import com.dev.expense_manager.repository.BudgetRepository;
 import com.dev.expense_manager.repository.CategoryRepository;
 import com.dev.expense_manager.repository.TransactionRepository;
 import com.dev.expense_manager.repository.UserRepository;
 import com.dev.expense_manager.service.BudgetService;
 import com.dev.expense_manager.service.EmailService;
-import com.dev.expense_manager.service.MessagePublisher;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +25,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class BudgetServiceImpl implements BudgetService {
@@ -35,7 +35,6 @@ public class BudgetServiceImpl implements BudgetService {
     private final CategoryRepository categoryRepository;
     private final TransactionRepository transactionRepository;
     private final BudgetMapper budgetMapper;
-    private final MessagePublisher messagePublisher;
     private final EmailService emailService;
 
     @Override
@@ -49,7 +48,7 @@ public class BudgetServiceImpl implements BudgetService {
         }
 
         Category category = null;
-        if (request.getCategoryId() != null) {
+        if (request.getCategoryId() != null && !request.getCategoryId().isBlank()) {
             category = categoryRepository.findByIdAndUserIdAndIsDeletedFalse(request.getCategoryId(), userId)
                     .orElseThrow(() -> new ResourceNotFoundException("Category", "id", request.getCategoryId()));
         }
@@ -121,7 +120,7 @@ public class BudgetServiceImpl implements BudgetService {
         }
 
         Category category = null;
-        if (request.getCategoryId() != null) {
+        if (request.getCategoryId() != null && !request.getCategoryId().isBlank()) {
             category = categoryRepository.findByIdAndUserIdAndIsDeletedFalse(request.getCategoryId(), userId)
                     .orElseThrow(() -> new ResourceNotFoundException("Category", "id", request.getCategoryId()));
         }
@@ -186,25 +185,6 @@ public class BudgetServiceImpl implements BudgetService {
         try {
             String alertType = budget.getPercentageUsed() >= 100 ? "EXCEEDED" : "WARNING";
 
-            BudgetAlertMessage message = BudgetAlertMessage.builder()
-                    .id(budget.getId())
-                    .userId(budget.getUser().getId())
-                    .email(budget.getUser().getEmail())
-                    .categoryId(budget.getCategory() != null ? budget.getCategory().getId() : null)
-                    .categoryName(budget.getCategory() != null ? budget.getCategory().getName() : "Overall")
-                    .budgetAmount(budget.getAmount())
-                    .spentAmount(budget.getSpentAmount())
-                    .remainingAmount(budget.getRemainingAmount())
-                    .percentageUsed(budget.getPercentageUsed())
-                    .period(budget.getPeriod())
-                    .periodStart(budget.getPeriodStart())
-                    .periodEnd(budget.getPeriodEnd())
-                    .alertType(alertType)
-                    .build();
-
-            messagePublisher.publishBudgetAlert(message);
-
-            // Send email notification
             emailService.sendBudgetAlertEmail(
                     budget.getUser(),
                     budget.getCategory() != null ? budget.getCategory().getName() : "Overall",
@@ -214,7 +194,7 @@ public class BudgetServiceImpl implements BudgetService {
                     alertType
             );
         } catch (Exception e) {
-            System.err.println("Failed to publish budget alert: " + e.getMessage());
+            log.error("Failed to send budget alert: {}", e.getMessage());
         }
     }
 }

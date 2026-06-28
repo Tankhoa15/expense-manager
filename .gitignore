@@ -31,3 +31,13 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Environment files (never commit real secrets)
+.env.uat
+.env.prod
+.env.local
+.env
+
+### Frontend build
+frontend/node_modules/
+frontend/dist/

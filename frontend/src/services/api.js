@@ -61,6 +61,16 @@ export const monthlyBalanceService = {
   createOrUpdate: (data) => api.post('/monthly-balances', data),
 }
 
+export const budgetService = {
+  getAll: () => api.get('/budgets'),
+  getById: (id) => api.get(`/budgets/${id}`),
+  create: (data) => api.post('/budgets', data),
+  update: (id, data) => api.put(`/budgets/${id}`, data),
+  delete: (id) => api.delete(`/budgets/${id}`),
+  getAlerts: () => api.get('/budgets/alerts'),
+  recalculate: () => api.post('/budgets/recalculate'),
+}
+
 export const categoryService = {
   getAll: () => api.get('/categories'),
   getByType: (type) => api.get(`/categories?type=${type}`),

@@ -44,16 +44,6 @@ public class User implements UserDetails {
     @Column(name = "email_verified")
     private boolean emailVerified;
 
-    @Column(name = "two_factor_enabled")
-    @Builder.Default
-    private boolean twoFactorEnabled = false;
-
-    @Column(name = "two_factor_secret")
-    private String twoFactorSecret;
-
-    @Column(name = "backup_codes")
-    private String backupCodes;
-
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 

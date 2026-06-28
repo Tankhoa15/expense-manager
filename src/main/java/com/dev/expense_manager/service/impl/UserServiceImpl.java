@@ -7,6 +7,8 @@ import com.dev.expense_manager.exception.DuplicateResourceException;
 import com.dev.expense_manager.exception.ResourceNotFoundException;
 import com.dev.expense_manager.mapper.UserMapper;
 import com.dev.expense_manager.repository.UserRepository;
+import com.dev.expense_manager.service.CategoryService;
+import com.dev.expense_manager.service.MoneySourceService;
 import com.dev.expense_manager.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -20,6 +22,8 @@ public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
+    private final CategoryService categoryService;
+    private final MoneySourceService moneySourceService;
 
     @Override
     @Transactional
@@ -32,11 +36,24 @@ public class UserServiceImpl implements UserService {
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
                 .fullName(request.getFullName())
-                .emailVerified(false)
+                .emailVerified(true)
                 .provider("local")
                 .build();
 
         User savedUser = userRepository.save(user);
+
+        // Seed default categories and money source for the new user
+        try {
+            categoryService.seedDefaultCategories(savedUser.getId());
+        } catch (Exception e) {
+            System.err.println("Failed to seed categories for user " + savedUser.getId() + ": " + e.getMessage());
+        }
+        try {
+            moneySourceService.createDefaultSource(savedUser.getId());
+        } catch (Exception e) {
+            System.err.println("Failed to create default money source for user " + savedUser.getId() + ": " + e.getMessage());
+        }
+
         return userMapper.toResponse(savedUser);
     }
 

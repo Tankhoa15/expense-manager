@@ -1,21 +1,16 @@
 package com.dev.expense_manager.service.impl;
 
 import com.dev.expense_manager.dto.request.TransactionRequest;
-import com.dev.expense_manager.dto.response.DashboardResponse;
-import com.dev.expense_manager.dto.response.DashboardResponse.CategorySummary;
 import com.dev.expense_manager.dto.response.TransactionResponse;
-import com.dev.expense_manager.entity.Category;
-import com.dev.expense_manager.entity.Transaction;
-import com.dev.expense_manager.entity.TransactionType;
-import com.dev.expense_manager.entity.User;
+import com.dev.expense_manager.entity.*;
+import com.dev.expense_manager.exception.BadRequestException;
 import com.dev.expense_manager.exception.ResourceNotFoundException;
 import com.dev.expense_manager.mapper.TransactionMapper;
-import com.dev.expense_manager.message.TransactionMessage;
 import com.dev.expense_manager.repository.CategoryRepository;
+import com.dev.expense_manager.repository.MoneySourceRepository;
 import com.dev.expense_manager.repository.TransactionRepository;
 import com.dev.expense_manager.repository.UserRepository;
 import com.dev.expense_manager.service.CacheService;
-import com.dev.expense_manager.service.MessagePublisher;
 import com.dev.expense_manager.service.TransactionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -24,9 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -37,8 +30,8 @@ public class TransactionServiceImpl implements TransactionService {
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
     private final CategoryRepository categoryRepository;
+    private final MoneySourceRepository moneySourceRepository;
     private final TransactionMapper transactionMapper;
-    private final MessagePublisher messagePublisher;
     private final CacheService cacheService;
 
     @Override
@@ -50,25 +43,27 @@ public class TransactionServiceImpl implements TransactionService {
         Category category = categoryRepository.findByIdAndUserIdAndIsDeletedFalse(request.getCategoryId(), userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Category", "id", request.getCategoryId()));
 
+        MoneySource moneySource = null;
+        if (request.getMoneySourceId() != null && !request.getMoneySourceId().isBlank()) {
+            moneySource = moneySourceRepository.findByIdAndUserIdAndIsDeletedFalse(request.getMoneySourceId(), userId)
+                    .orElseThrow(() -> new ResourceNotFoundException("MoneySource", "id", request.getMoneySourceId()));
+        }
+
         Transaction transaction = Transaction.builder()
                 .amount(request.getAmount())
                 .type(request.getType())
+                .status(TransactionStatus.PENDING)
                 .transactionDate(request.getTransactionDate())
                 .note(request.getNote())
                 .description(request.getDescription())
                 .user(user)
                 .category(category)
+                .moneySource(moneySource)
                 .build();
 
-        Transaction savedTransaction = transactionRepository.save(transaction);
-
-        publishTransactionMessage(savedTransaction, user, "CREATED");
-
-        // Invalidate cache
-        cacheService.evictPattern("dashboard:" + userId);
-        cacheService.evictPattern("statistics:" + userId);
-
-        return transactionMapper.toResponse(savedTransaction);
+        Transaction saved = transactionRepository.save(transaction);
+        evictCache(userId);
+        return transactionMapper.toResponse(saved);
     }
 
     @Override
@@ -83,7 +78,15 @@ public class TransactionServiceImpl implements TransactionService {
     @Override
     @Transactional(readOnly = true)
     public Page<TransactionResponse> getAllByUserId(String userId, Pageable pageable) {
-        return transactionRepository.findByUserIdAndIsDeletedFalseOrderByTransactionDateDesc(userId, pageable)
+        return transactionRepository.findByUserIdAndIsDeletedFalseOrderByTransactionDateDescCreatedAtDesc(userId, pageable)
+                .map(transactionMapper::toResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<TransactionResponse> getPendingByUserId(String userId, Pageable pageable) {
+        return transactionRepository.findByUserIdAndStatusAndIsDeletedFalseOrderByTransactionDateDescCreatedAtDesc(
+                userId, TransactionStatus.PENDING, pageable)
                 .map(transactionMapper::toResponse);
     }
 
@@ -103,26 +106,72 @@ public class TransactionServiceImpl implements TransactionService {
                 .filter(t -> t.getUser().getId().equals(userId) && !t.isDeleted())
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction", "id", transactionId));
 
+        if (transaction.getStatus() == TransactionStatus.CONFIRMED) {
+            throw new BadRequestException("Cannot edit a confirmed transaction");
+        }
+
         Category category = categoryRepository.findByIdAndUserIdAndIsDeletedFalse(request.getCategoryId(), userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Category", "id", request.getCategoryId()));
 
-        User user = transaction.getUser();
+        MoneySource moneySource = null;
+        if (request.getMoneySourceId() != null && !request.getMoneySourceId().isBlank()) {
+            moneySource = moneySourceRepository.findByIdAndUserIdAndIsDeletedFalse(request.getMoneySourceId(), userId)
+                    .orElseThrow(() -> new ResourceNotFoundException("MoneySource", "id", request.getMoneySourceId()));
+        }
+
         transaction.setAmount(request.getAmount());
         transaction.setType(request.getType());
         transaction.setTransactionDate(request.getTransactionDate());
         transaction.setNote(request.getNote());
         transaction.setDescription(request.getDescription());
         transaction.setCategory(category);
+        transaction.setMoneySource(moneySource);
 
-        Transaction updatedTransaction = transactionRepository.save(transaction);
+        Transaction updated = transactionRepository.save(transaction);
+        evictCache(userId);
+        return transactionMapper.toResponse(updated);
+    }
 
-        publishTransactionMessage(updatedTransaction, user, "UPDATED");
+    @Override
+    @Transactional
+    public void confirm(String userId, String transactionId) {
+        Transaction transaction = transactionRepository.findById(transactionId)
+                .filter(t -> t.getUser().getId().equals(userId) && !t.isDeleted())
+                .orElseThrow(() -> new ResourceNotFoundException("Transaction", "id", transactionId));
 
-        // Invalidate cache
-        cacheService.evictPattern("dashboard:" + userId);
-        cacheService.evictPattern("statistics:" + userId);
+        if (transaction.getStatus() != TransactionStatus.PENDING) {
+            throw new BadRequestException("Only PENDING transactions can be confirmed");
+        }
 
-        return transactionMapper.toResponse(updatedTransaction);
+        if (transaction.getMoneySource() != null) {
+            MoneySource source = transaction.getMoneySource();
+            if (transaction.getType() == TransactionType.INCOME) {
+                source.setCurrentBalance(source.getCurrentBalance().add(transaction.getAmount()));
+            } else {
+                source.setCurrentBalance(source.getCurrentBalance().subtract(transaction.getAmount()));
+            }
+            moneySourceRepository.save(source);
+        }
+
+        transaction.setStatus(TransactionStatus.CONFIRMED);
+        transactionRepository.save(transaction);
+        evictCache(userId);
+    }
+
+    @Override
+    @Transactional
+    public void cancel(String userId, String transactionId) {
+        Transaction transaction = transactionRepository.findById(transactionId)
+                .filter(t -> t.getUser().getId().equals(userId) && !t.isDeleted())
+                .orElseThrow(() -> new ResourceNotFoundException("Transaction", "id", transactionId));
+
+        if (transaction.getStatus() != TransactionStatus.PENDING) {
+            throw new BadRequestException("Only PENDING transactions can be cancelled");
+        }
+
+        transaction.setStatus(TransactionStatus.CANCELLED);
+        transactionRepository.save(transaction);
+        evictCache(userId);
     }
 
     @Override
@@ -132,15 +181,19 @@ public class TransactionServiceImpl implements TransactionService {
                 .filter(t -> t.getUser().getId().equals(userId) && !t.isDeleted())
                 .orElseThrow(() -> new ResourceNotFoundException("Transaction", "id", transactionId));
 
-        User user = transaction.getUser();
-        publishTransactionMessage(transaction, user, "DELETED");
+        if (transaction.getStatus() == TransactionStatus.CONFIRMED && transaction.getMoneySource() != null) {
+            MoneySource source = transaction.getMoneySource();
+            if (transaction.getType() == TransactionType.INCOME) {
+                source.setCurrentBalance(source.getCurrentBalance().subtract(transaction.getAmount()));
+            } else {
+                source.setCurrentBalance(source.getCurrentBalance().add(transaction.getAmount()));
+            }
+            moneySourceRepository.save(source);
+        }
 
         transaction.setDeleted(true);
         transactionRepository.save(transaction);
-
-        // Invalidate cache
-        cacheService.evictPattern("dashboard:" + userId);
-        cacheService.evictPattern("statistics:" + userId);
+        evictCache(userId);
     }
 
     @Override
@@ -149,68 +202,8 @@ public class TransactionServiceImpl implements TransactionService {
         return transactionRepository.sumAmountByUserIdAndTypeAndDateRange(userId, type, startDate, endDate);
     }
 
-    @Override
-    @Transactional(readOnly = true)
-    public DashboardResponse getDashboard(String userId, LocalDate startDate, LocalDate endDate) {
-        BigDecimal totalIncome = transactionRepository.sumAmountByUserIdAndTypeAndDateRange(userId, TransactionType.INCOME, startDate, endDate);
-        BigDecimal totalExpense = transactionRepository.sumAmountByUserIdAndTypeAndDateRange(userId, TransactionType.EXPENSE, startDate, endDate);
-
-        List<Object[]> categoryBreakdown = transactionRepository.sumAmountByCategoryAndTypeAndDateRange(userId, TransactionType.EXPENSE, startDate, endDate);
-
-        List<CategorySummary> categorySummaries = new ArrayList<>();
-        for (Object[] row : categoryBreakdown) {
-            String categoryId = (String) row[0];
-            BigDecimal amount = (BigDecimal) row[1];
-
-            Category category = categoryRepository.findById(categoryId).orElse(null);
-            if (category != null) {
-                BigDecimal percentage = BigDecimal.ZERO;
-                if (totalExpense.compareTo(BigDecimal.ZERO) > 0) {
-                    percentage = amount.multiply(BigDecimal.valueOf(100))
-                            .divide(totalExpense, 2, RoundingMode.HALF_UP);
-                }
-
-                categorySummaries.add(CategorySummary.builder()
-                        .categoryId(categoryId)
-                        .categoryName(category.getName())
-                        .categoryColor(category.getColor())
-                        .totalAmount(amount)
-                        .transactionCount(0)
-                        .percentage(percentage)
-                        .build());
-            }
-        }
-
-        return DashboardResponse.builder()
-                .totalIncome(totalIncome)
-                .totalExpense(totalExpense)
-                .balance(totalIncome.subtract(totalExpense))
-                .categoryBreakdown(categorySummaries)
-                .monthlyTrend(new ArrayList<>())
-                .budgetAlerts(new ArrayList<>())
-                .build();
-    }
-
-    private void publishTransactionMessage(Transaction transaction, User user, String eventType) {
-        try {
-            TransactionMessage message = TransactionMessage.builder()
-                    .id(transaction.getId())
-                    .userId(user.getId())
-                    .email(user.getEmail())
-                    .amount(transaction.getAmount())
-                    .type(transaction.getType())
-                    .description(transaction.getDescription())
-                    .categoryId(transaction.getCategory() != null ? transaction.getCategory().getId() : null)
-                    .categoryName(transaction.getCategory() != null ? transaction.getCategory().getName() : null)
-                    .transactionDate(transaction.getTransactionDate())
-                    .createdAt(transaction.getCreatedAt())
-                    .eventType(eventType)
-                    .build();
-
-            messagePublisher.publishTransactionCreated(message);
-        } catch (Exception e) {
-            // Log error but don't fail the main transaction
-            System.err.println("Failed to publish transaction message: " + e.getMessage());
-        }
+    private void evictCache(String userId) {
+        cacheService.evictPattern("dashboard:" + userId);
+        cacheService.evictPattern("statistics:" + userId);
     }
 }

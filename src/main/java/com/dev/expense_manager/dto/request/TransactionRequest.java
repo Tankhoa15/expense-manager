@@ -28,6 +28,8 @@ public class TransactionRequest {
     @NotBlank(message = "Category ID is required")
     private String categoryId;
 
+    private String moneySourceId;
+
     @Size(max = 500, message = "Note cannot exceed 500 characters")
     private String note;
 
