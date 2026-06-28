@@ -20,6 +20,9 @@ spring:
       password: ${REDIS_PASSWORD:}
 
 app:
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:8080}
+
   jwt:
     secret: ${JWT_SECRET:changeme_uat_very_long_secret_key_at_least_256_bits}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}

@@ -1,8 +1,4 @@
 -- V1__Initial_Schema.sql
--- Create custom enum types
-CREATE TYPE transaction_type AS ENUM ('INCOME', 'EXPENSE');
-CREATE TYPE budget_period AS ENUM ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY');
-
 -- Users table
 CREATE TABLE users (
     id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -19,13 +15,17 @@ CREATE TABLE users (
 
 CREATE INDEX idx_users_email ON users(email);
 
+-- System user for default categories copied to newly registered users
+INSERT INTO users (id, email, full_name, email_verified)
+VALUES ('00000000-0000-0000-0000-000000000000', 'system@expense-manager.local', 'System', TRUE);
+
 -- Categories table
 CREATE TABLE categories (
     id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     name VARCHAR(50) NOT NULL,
     icon VARCHAR(50),
     color VARCHAR(7),
-    type transaction_type NOT NULL,
+    type VARCHAR(20) NOT NULL CHECK (type IN ('INCOME', 'EXPENSE')),
     user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     is_default BOOLEAN NOT NULL DEFAULT FALSE,
     is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
@@ -42,7 +42,7 @@ CREATE INDEX idx_categories_is_deleted ON categories(is_deleted);
 CREATE TABLE transactions (
     id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     amount DECIMAL(15, 2) NOT NULL,
-    type transaction_type NOT NULL,
+    type VARCHAR(20) NOT NULL CHECK (type IN ('INCOME', 'EXPENSE')),
     transaction_date DATE NOT NULL,
     note VARCHAR(500),
     description VARCHAR(1000),
@@ -65,7 +65,7 @@ CREATE TABLE budgets (
     id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     amount DECIMAL(15, 2) NOT NULL,
     spent_amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    period budget_period NOT NULL,
+    period VARCHAR(20) NOT NULL CHECK (period IN ('DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY')),
     period_start DATE NOT NULL,
     period_end DATE NOT NULL,
     user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,

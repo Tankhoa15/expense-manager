@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/monthly-balances")
+@RequestMapping("/api/v1/monthly-balances")
 @RequiredArgsConstructor
 public class MonthlyBalanceController {
 

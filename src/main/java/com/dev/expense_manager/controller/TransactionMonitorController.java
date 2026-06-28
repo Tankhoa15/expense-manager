@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/monitor")
+@RequestMapping("/api/v1/monitor")
 @RequiredArgsConstructor
 public class TransactionMonitorController {
 

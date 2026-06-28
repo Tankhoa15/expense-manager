@@ -30,6 +30,7 @@ public class BudgetRequest {
 
     private String categoryId;
 
+    @Builder.Default
     @Min(value = 1, message = "Alert threshold must be at least 1")
     @Max(value = 100, message = "Alert threshold cannot exceed 100")
     private Integer alertThreshold = 80;

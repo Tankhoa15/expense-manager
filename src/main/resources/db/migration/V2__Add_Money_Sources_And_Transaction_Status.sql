@@ -21,14 +21,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL D
 ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS backup_codes TEXT;
 
--- Money source type enum
-CREATE TYPE money_source_type AS ENUM ('CASH', 'BANK_ACCOUNT', 'CREDIT_CARD', 'E_WALLET', 'OTHER');
-
 -- Money sources table
 CREATE TABLE money_sources (
     id VARCHAR(36) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     name VARCHAR(100) NOT NULL,
-    source_type money_source_type NOT NULL DEFAULT 'CASH',
+    source_type VARCHAR(30) NOT NULL DEFAULT 'CASH' CHECK (source_type IN ('CASH', 'BANK_ACCOUNT', 'CREDIT_CARD', 'E_WALLET', 'OTHER')),
     initial_balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
     current_balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
     user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -56,12 +53,9 @@ CREATE TABLE monthly_balances (
 CREATE INDEX idx_monthly_balances_user_id ON monthly_balances(user_id);
 CREATE INDEX idx_monthly_balances_year_month ON monthly_balances(user_id, year, month);
 
--- Transaction status enum
-CREATE TYPE transaction_status AS ENUM ('PENDING', 'CONFIRMED', 'CANCELLED');
-
 -- Add status and money_source_id to transactions
 ALTER TABLE transactions
-    ADD COLUMN status transaction_status NOT NULL DEFAULT 'CONFIRMED',
+    ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED')),
     ADD COLUMN money_source_id VARCHAR(36) REFERENCES money_sources(id) ON DELETE SET NULL;
 
 CREATE INDEX idx_transactions_status ON transactions(status);

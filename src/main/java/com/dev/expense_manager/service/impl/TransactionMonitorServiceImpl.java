@@ -1,5 +1,6 @@
 package com.dev.expense_manager.service.impl;
 
+import com.dev.expense_manager.constant.CacheKeyConstants;
 import com.dev.expense_manager.dto.response.TransactionMonitorResponse;
 import com.dev.expense_manager.entity.Transaction;
 import com.dev.expense_manager.entity.TransactionType;
@@ -25,13 +26,10 @@ public class TransactionMonitorServiceImpl implements TransactionMonitorService 
     private final TransactionRepository transactionRepository;
     private final CacheService cacheService;
 
-    private static final String DASHBOARD_KEY = "dashboard:";
-    private static final String STATS_KEY = "statistics:";
-
     @Override
     @Transactional(readOnly = true)
     public TransactionMonitorResponse getOverview(String userId) {
-        String cacheKey = DASHBOARD_KEY + "overview:" + userId;
+        String cacheKey = CacheKeyConstants.dashboardOverviewKey(userId);
 
         return cacheService.get(cacheKey, TransactionMonitorResponse.class, () -> {
             LocalDate today = LocalDate.now();
@@ -71,23 +69,30 @@ public class TransactionMonitorServiceImpl implements TransactionMonitorService 
     @Override
     @Transactional(readOnly = true)
     public List<Map<String, Object>> getRecentActivity(String userId) {
-        String cacheKey = DASHBOARD_KEY + "recent:" + userId;
+        String cacheKey = CacheKeyConstants.dashboardRecentKey(userId);
 
-        return cacheService.get(cacheKey, List.class, () -> {
-            Page<Transaction> transactions = transactionRepository
-                    .findByUserIdAndIsDeletedFalseOrderByTransactionDateDescCreatedAtDesc(userId, PageRequest.of(0, 50));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cached = (List<Map<String, Object>>) cacheService.get(cacheKey, List.class);
+        if (cached != null) {
+            return cached;
+        }
 
-            return transactions.getContent().stream()
-                    .map(this::mapToActivity)
-                    .collect(Collectors.toList());
-        });
+        Page<Transaction> transactions = transactionRepository
+                .findByUserIdAndIsDeletedFalseOrderByTransactionDateDescCreatedAtDesc(userId, PageRequest.of(0, 50));
+
+        List<Map<String, Object>> result = transactions.getContent().stream()
+                .map(this::mapToActivity)
+                .collect(Collectors.toList());
+
+        cacheService.put(cacheKey, result);
+        return result;
     }
 
     @Override
     @Transactional(readOnly = true)
     @SuppressWarnings("unchecked")
     public Map<String, Object> getStatistics(String userId) {
-        String cacheKey = STATS_KEY + userId;
+        String cacheKey = CacheKeyConstants.statisticsKey(userId);
 
         Map<String, Object> cached = cacheService.get(cacheKey, Map.class);
         if (cached != null) {
@@ -146,32 +151,37 @@ public class TransactionMonitorServiceImpl implements TransactionMonitorService 
     @Override
     @Transactional(readOnly = true)
     public List<Map<String, Object>> getTransactionTrend(String userId, int days) {
-        String cacheKey = DASHBOARD_KEY + "trend:" + userId + ":" + days;
+        String cacheKey = CacheKeyConstants.dashboardTrendKey(userId, days);
 
-        return cacheService.get(cacheKey, List.class, () -> {
-            LocalDate today = LocalDate.now();
-            List<Map<String, Object>> trend = new ArrayList<>();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cached = (List<Map<String, Object>>) cacheService.get(cacheKey, List.class);
+        if (cached != null) {
+            return cached;
+        }
 
-            for (int i = days - 1; i >= 0; i--) {
-                LocalDate date = today.minusDays(i);
-                LocalDate nextDate = date.plusDays(1);
+        LocalDate today = LocalDate.now();
+        List<Map<String, Object>> trend = new ArrayList<>();
 
-                List<Transaction> dayTransactions = transactionRepository
-                        .findByUserIdAndTransactionDateBetweenAndIsDeletedFalse(userId, date, nextDate);
+        for (int i = days - 1; i >= 0; i--) {
+            LocalDate date = today.minusDays(i);
+            LocalDate nextDate = date.plusDays(1);
 
-                BigDecimal income = calculateIncome(dayTransactions);
-                BigDecimal expense = calculateExpense(dayTransactions);
+            List<Transaction> dayTransactions = transactionRepository
+                    .findByUserIdAndTransactionDateBetweenAndIsDeletedFalse(userId, date, nextDate);
 
-                Map<String, Object> dayData = new HashMap<>();
-                dayData.put("date", date.toString());
-                dayData.put("income", income);
-                dayData.put("expense", expense);
-                dayData.put("count", dayTransactions.size());
-                trend.add(dayData);
-            }
+            BigDecimal income = calculateIncome(dayTransactions);
+            BigDecimal expense = calculateExpense(dayTransactions);
 
-            return trend;
-        });
+            Map<String, Object> dayData = new HashMap<>();
+            dayData.put("date", date.toString());
+            dayData.put("income", income);
+            dayData.put("expense", expense);
+            dayData.put("count", dayTransactions.size());
+            trend.add(dayData);
+        }
+
+        cacheService.put(cacheKey, trend);
+        return trend;
     }
 
     private BigDecimal calculateIncome(List<Transaction> transactions) {

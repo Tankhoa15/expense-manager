@@ -14,9 +14,10 @@ Tài liệu mô tả kiến trúc backend theo luồng **Database → Entity →
 | Web | `spring-boot-starter-webmvc` (REST) |
 | Persistence | Spring Data JPA + Hibernate, PostgreSQL |
 | Migration | Flyway (`src/main/resources/db/migration`) |
-| Bảo mật | Spring Security + JWT (jjwt 0.12.5), stateless |
-| Cache | Redis (chỉ dùng cho các endpoint `/api/monitor`) |
+| Bảo mật | Spring Security + JWT (jjwt 0.12.5), stateless + Rate Limiting |
+| Cache | Redis (cho dashboard & monitor endpoints) |
 | Email | `spring-boot-starter-mail` (gửi bất đồng bộ qua `@Async`) |
+| Validation | Jakarta Validation + Custom validators |
 | Boilerplate | Lombok |
 
 Profile cấu hình: `application.yaml` (default/local), `application-uat.yaml`, `application-prod.yaml`. Tất cả giá trị nhạy cảm đọc qua biến môi trường `${VAR:default}`.
@@ -29,17 +30,21 @@ Profile cấu hình: `application.yaml` (default/local), `application-uat.yaml`,
 HTTP request
    │
    ▼
+RateLimitFilter (chỉ /auth endpoints)  ──►  check IP rate limit (5 req/min)
+   │
+   ▼
 JwtAuthenticationFilter  ──►  set Authentication (UserPrincipal) vào SecurityContext
    │
    ▼
 Controller (@RestController)        ← chỉ điều phối, không có business logic
    │   - đọc userId từ @AuthenticationPrincipal UserPrincipal
-   │   - validate body (@Valid)
+   │   - validate body (@Valid + custom validators)
    │   - bọc kết quả vào ApiResponse<T>
    ▼
 Service (interface + Impl)          ← toàn bộ business logic, @Transactional
    │   - kiểm tra quyền sở hữu (record thuộc userId)
    │   - gọi Mapper để map Entity ↔ DTO
+   │   - evict cache khi cần (qua CacheKeyConstants)
    ▼
 Repository (Spring Data JPA)        ← truy vấn DB, lọc soft-delete (isDeletedFalse)
    │
@@ -98,26 +103,32 @@ Mỗi domain theo đúng chuỗi: **Entity** → **Repository** → **Service (i
 - **Repository**: `UserRepository` — `findByEmail`, `existsByEmail`
 - **Service**: `UserService` / `UserServiceImpl`
   - `register()` orchestrate: tạo user → seed default categories → tạo money source mặc định (gọi `CategoryService`, `MoneySourceService`).
+  - Password validation: minimum 8 chars, uppercase, lowercase, digit, special char (via `@ValidPassword`)
   - `getCurrentUser()`, `getUserByEmail()`
-- **Security**: `JwtTokenProvider` (tạo/parse token), `JwtAuthenticationFilter` (đọc Bearer token mỗi request), `CustomUserDetailsService`, `UserPrincipal`.
-- **API** (`/api/auth`):
-  | Method | Path | Mô tả |
-  |---|---|---|
-  | POST | `/register` | Đăng ký, trả `UserResponse` |
-  | POST | `/login` | Trả `{ accessToken, tokenType, user }` |
-  | GET | `/me` | Thông tin user hiện tại |
+- **Security**: 
+  - `JwtTokenProvider` (tạo/parse token)
+  - `JwtAuthenticationFilter` (đọc Bearer token mỗi request)
+  - `RateLimitFilter` (giới hạn 5 requests/min cho /login và /register)
+  - `CustomUserDetailsService`, `UserPrincipal`
+  - `PasswordValidator` (custom validator cho password policy)
+- **API** (`/api/v1/auth`):
+  | Method | Path | Mô tả | Rate Limited |
+  |---|---|---|---|
+  | POST | `/register` | Đăng ký, trả `UserResponse`. Password policy enforced. | ✅ 5/min |
+  | POST | `/login` | Trả `{ accessToken, tokenType, user }` | ✅ 5/min |
+  | GET | `/me` | Thông tin user hiện tại | No |
 
 ### 4.2 Category
 - **Entity**: `Category` (type: `TransactionType`, soft-delete)
 - **Repository**: `CategoryRepository` — `findByUserIdAndIsDeletedFalse`, `findByUserIdAndTypeAndIsDeletedFalse`, `existsByUserIdAndNameAndIsDeletedFalse`, ...
 - **Service**: `CategoryService` / `CategoryServiceImpl` — CRUD + `seedDefaultCategories()` (clone 12 category mặc định khi đăng ký)
-- **API** (`/api/categories`): `POST`, `GET`, `GET /{id}`, `GET /type/{type}`, `PUT /{id}`, `DELETE /{id}` (soft delete), `POST /seed`
+- **API** (`/api/v1/categories`): `POST`, `GET`, `GET /{id}`, `GET /type/{type}`, `PUT /{id}`, `DELETE /{id}` (soft delete), `POST /seed`
 
 ### 4.3 MoneySource (ví/nguồn tiền)
 - **Entity**: `MoneySource` (`MoneySourceType`, `initialBalance` / `currentBalance`)
 - **Repository**: `MoneySourceRepository` — `findByUserIdAndIsDeletedFalse`, `sumCurrentBalanceByUserId`, ...
 - **Service**: `MoneySourceService` / `MoneySourceServiceImpl` — CRUD; khi đổi `initialBalance` thì điều chỉnh `currentBalance` tương ứng; `createDefaultSource()` cho user mới
-- **API** (`/api/money-sources`): `POST`, `GET`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}`
+- **API** (`/api/v1/money-sources`): `POST`, `GET`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}`
 
 ### 4.4 Transaction
 - **Entity**: `Transaction` (type, **status**, liên kết Category bắt buộc + MoneySource tùy chọn, soft-delete)
@@ -129,8 +140,8 @@ Mỗi domain theo đúng chuỗi: **Entity** → **Repository** → **Service (i
   - Vòng đời status: tạo ở `PENDING` → `confirm()` (cộng/trừ `currentBalance` của MoneySource theo INCOME/EXPENSE) → hoặc `cancel()`.
   - `update()` chỉ cho phép khi chưa `CONFIRMED`.
   - `delete()` (soft) đảo lại số dư nếu giao dịch đã `CONFIRMED`.
-  - Sau mỗi thay đổi: `evictCache()` xóa cache dashboard/statistics.
-- **API** (`/api/transactions`):
+  - Sau mỗi thay đổi: `evictCache()` xóa cache qua `CacheKeyConstants.dashboardKey()` và `CacheKeyConstants.statisticsKey()`.
+- **API** (`/api/v1/transactions`):
   | Method | Path | Mô tả |
   |---|---|---|
   | POST | `/` | Tạo (status `PENDING`) |
@@ -144,44 +155,57 @@ Mỗi domain theo đúng chuỗi: **Entity** → **Repository** → **Service (i
   | DELETE | `/{id}` | Xóa mềm |
 
 ### 4.5 Budget
-- **Entity**: `Budget` (`BudgetPeriod`, `alertThreshold`, helper `getRemainingAmount()` / `getPercentageUsed()`)
+- **Entity**: `Budget` (`BudgetPeriod`, `alertThreshold` default 80%, helper `getRemainingAmount()` / `getPercentageUsed()`)
 - **Repository**: `BudgetRepository` — tìm budget active theo category/period/date, phát hiện overlap
 - **Service**: `BudgetService` / `BudgetServiceImpl`
   - Tính lại `spentAmount` từ transactions; khi vượt `alertThreshold` (và lần trước chưa vượt) → gọi `EmailService.sendBudgetAlertEmail()` (bất đồng bộ).
-- **API** (`/api/budgets`): `POST`, `GET`, `GET /{id}`, `GET /alerts`, `PUT /{id}`, `DELETE /{id}`, `POST /recalculate`
+  - `alertThreshold` sử dụng `@Builder.Default` để tránh Lombok warning
+- **API** (`/api/v1/budgets`): `POST`, `GET`, `GET /{id}`, `GET /alerts`, `PUT /{id}`, `DELETE /{id}`, `POST /recalculate`
 
 ### 4.6 MonthlyBalance
 - **Entity**: `MonthlyBalance` (year, month, opening_balance)
 - **Repository**: `MonthlyBalanceRepository` — `findByUserIdAndYearAndMonth`, `findByUserIdOrderByYearDescMonthDesc`
 - **Service**: `MonthlyBalanceService` / `MonthlyBalanceServiceImpl` — lưu `opening_balance`, tính income/expense của tháng on-the-fly từ transactions
-- **API** (`/api/monthly-balances`): `POST` (create or update), `GET`, `GET /current`
+- **API** (`/api/v1/monthly-balances`): `POST` (create or update), `GET`, `GET /current`
 
 ### 4.7 Dashboard (read-model tổng hợp)
 - **Service**: `DashboardService` / `DashboardServiceImpl` — gom từ nhiều repository (MoneySource, Transaction, Category) trả `DashboardSummaryResponse`: `totalBalance`, `monthIncome`, `monthExpense`, `pendingAmount`, `moneySources[]`, `recentTransactions[]`, `categoryBreakdown[]`
-- **API** (`/api/dashboard`): `GET`
+- **Cache**: 5 phút (configurable via `app.cache.dashboard.ttl-minutes`)
+- **API** (`/api/v1/dashboard`): `GET`
 
 ### 4.8 Transaction Monitor (có cache)
 - **Service**: `TransactionMonitorService` / `TransactionMonitorServiceImpl` — `getOverview`, `getRecentActivity`, `getStatistics`, `getTransactionTrend`; kết quả được cache qua `CacheService` (Redis), TTL theo `app.cache.*`.
-- **API** (`/api/monitor`): `GET /overview`, `GET /recent`, `GET /statistics`, `GET /trend?days=`
+- **Cache Keys**: Sử dụng constants từ `CacheKeyConstants` (không hardcode strings)
+- **Cache TTL**: Dashboard 5 phút, Statistics 10 phút (configurable)
+- **API** (`/api/v1/monitor`): `GET /overview`, `GET /recent`, `GET /statistics`, `GET /trend?days=`
 
 ### 4.9 Health
-- **API** (`/api`): `GET /health`
+- **API** (`/api/v1`): `GET /health` (public, không cần auth)
 
 ---
 
 ## 5. Cross-cutting concerns
 
 ### Security / JWT
-- Stateless. `JwtAuthenticationFilter` đọc header `Authorization: Bearer <token>`, verify bằng `JwtTokenProvider`, nạp `UserPrincipal` vào `SecurityContext`.
-- Cấu hình tại `SecurityConfig` (`/api/auth/**`, `/api/health` public; còn lại yêu cầu auth).
+- **Stateless JWT**: `JwtAuthenticationFilter` đọc header `Authorization: Bearer <token>`, verify bằng `JwtTokenProvider`, nạp `UserPrincipal` vào `SecurityContext`.
+- **Rate Limiting**: `RateLimitFilter` giới hạn `/api/v1/auth/login` và `/api/v1/auth/register` 5 requests/phút per IP. Hỗ trợ `X-Forwarded-For` header.
+- **Password Policy**: Custom validator `@ValidPassword` enforces strong passwords (8+ chars, uppercase, lowercase, digit, special char).
+- **CORS**: Dynamic origins via `app.cors.allowed-origins` environment variable.
+- **Security Config**: `/api/v1/auth/**`, `/api/v1/health` public; còn lại yêu cầu auth.
+- **JWT Secret**: Production requires `JWT_SECRET` env var (no default fallback).
 - `JwtAuthenticationEntryPoint` trả 401 khi chưa xác thực.
 
 ### Response envelope
 Mọi endpoint trả `ApiResponse<T>` thống nhất: `{ success, message, data }`. Lỗi được chuẩn hóa tại `GlobalExceptionHandler` (`ResourceNotFoundException` → 404, `BadRequestException` → 400, `DuplicateResourceException` → 409, validation → 400).
 
 ### Cache (Redis)
-- `CacheService` / `CacheServiceImpl` (prefix `expense:cache:`). Chỉ phục vụ các endpoint `/api/monitor`.
-- Khi transaction thay đổi, `TransactionServiceImpl.evictCache()` xóa key `dashboard:*` và `statistics:*` của user.
+- **CacheService** / `CacheServiceImpl` (prefix `expense:cache:`). Phục vụ dashboard và monitor endpoints.
+- **Cache Keys**: Tất cả keys được quản lý qua `CacheKeyConstants` utility class (không hardcode strings).
+- **Cache Eviction**: Khi transaction thay đổi, `TransactionServiceImpl.evictCache()` xóa keys qua `CacheKeyConstants.dashboardKey(userId)` và `CacheKeyConstants.statisticsKey(userId)`.
+- **TTL**: 
+  - Dashboard: 5 phút (configurable)
+  - Statistics: 10 phút (configurable)
+  - Trend/Recent: 5 phút
 
 ### Email (async)
 - `EmailServiceImpl` gửi HTML qua SMTP, các method gắn `@Async` (bật bởi `AsyncConfig @EnableAsync`). Hai loại: welcome email và budget alert.
@@ -191,16 +215,28 @@ Mọi endpoint trả `ApiResponse<T>` thống nhất: `{ success, message, data 
 
 ---
 
-## 6. Tổng hợp API
+## 6. Tổng hợp API (Version 1)
 
-| Prefix | Domain |
-|---|---|
-| `/api/auth` | Đăng ký / đăng nhập / thông tin user |
-| `/api/categories` | Danh mục thu/chi |
-| `/api/money-sources` | Nguồn tiền / ví |
-| `/api/transactions` | Giao dịch (PENDING → CONFIRMED/CANCELLED) |
-| `/api/budgets` | Ngân sách + cảnh báo |
-| `/api/monthly-balances` | Số dư đầu kỳ theo tháng |
-| `/api/dashboard` | Tổng quan dashboard |
-| `/api/monitor` | Thống kê (có cache Redis) |
-| `/api/health` | Health check |
+> ⚠️ **API Versioning**: Tất cả endpoints sử dụng prefix `/api/v1/` (as of 2024-06-28)
+
+| Prefix | Domain | Rate Limited | Auth Required |
+|---|---|---|---|
+| `/api/v1/auth` | Đăng ký / đăng nhập / thông tin user | ✅ 5/min | Partial |
+| `/api/v1/categories` | Danh mục thu/chi | No | ✅ |
+| `/api/v1/money-sources` | Nguồn tiền / ví | No | ✅ |
+| `/api/v1/transactions` | Giao dịch (PENDING → CONFIRMED/CANCELLED) | No | ✅ |
+| `/api/v1/budgets` | Ngân sách + cảnh báo | No | ✅ |
+| `/api/v1/monthly-balances` | Số dư đầu kỳ theo tháng | No | ✅ |
+| `/api/v1/dashboard` | Tổng quan dashboard (cached 5m) | No | ✅ |
+| `/api/v1/monitor` | Thống kê (cached 5-10m) | No | ✅ |
+| `/api/v1/health` | Health check | No | No |
+
+### Breaking Changes
+- Old `/api/*` endpoints deprecated and removed (2024-06-28)
+- Frontend must update base URL from `/api` to `/api/v1`
+
+### Security Enhancements
+- Password policy enforced on registration
+- Rate limiting on authentication endpoints
+- Dynamic CORS configuration
+- JWT secret required in production

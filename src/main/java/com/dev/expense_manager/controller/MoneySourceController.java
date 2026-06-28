@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/money-sources")
+@RequestMapping("/api/v1/money-sources")
 @RequiredArgsConstructor
 public class MoneySourceController {
 

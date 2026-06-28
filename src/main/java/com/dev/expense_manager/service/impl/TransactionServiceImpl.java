@@ -1,5 +1,6 @@
 package com.dev.expense_manager.service.impl;
 
+import com.dev.expense_manager.constant.CacheKeyConstants;
 import com.dev.expense_manager.dto.request.TransactionRequest;
 import com.dev.expense_manager.dto.response.TransactionResponse;
 import com.dev.expense_manager.entity.*;
@@ -203,7 +204,7 @@ public class TransactionServiceImpl implements TransactionService {
     }
 
     private void evictCache(String userId) {
-        cacheService.evictPattern("dashboard:" + userId);
-        cacheService.evictPattern("statistics:" + userId);
+        cacheService.evictPattern(CacheKeyConstants.dashboardKey(userId));
+        cacheService.evictPattern(CacheKeyConstants.statisticsKey(userId));
     }
 }

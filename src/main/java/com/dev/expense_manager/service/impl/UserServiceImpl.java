@@ -11,12 +11,14 @@ import com.dev.expense_manager.service.CategoryService;
 import com.dev.expense_manager.service.MoneySourceService;
 import com.dev.expense_manager.service.UserService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
@@ -46,14 +48,15 @@ public class UserServiceImpl implements UserService {
         try {
             categoryService.seedDefaultCategories(savedUser.getId());
         } catch (Exception e) {
-            System.err.println("Failed to seed categories for user " + savedUser.getId() + ": " + e.getMessage());
+            log.warn("Failed to seed categories for user {}", savedUser.getId(), e);
         }
         try {
             moneySourceService.createDefaultSource(savedUser.getId());
         } catch (Exception e) {
-            System.err.println("Failed to create default money source for user " + savedUser.getId() + ": " + e.getMessage());
+            log.warn("Failed to create default money source for user {}", savedUser.getId(), e);
         }
 
+        log.info("User registered successfully: userId={}, provider={}", savedUser.getId(), savedUser.getProvider());
         return userMapper.toResponse(savedUser);
     }
 
